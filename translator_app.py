@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QTextEdit, QPushButton, QComboBox, QCheckBox, QSystemTrayIcon, 
     QMenu, QAction, QMessageBox, QStyle, QDesktopWidget, QDialog, 
-    QVBoxLayout, QLabel, QDialogButtonBox
+    QLabel, QDialogButtonBox, QLineEdit, QFormLayout
 )
 from PyQt5.QtCore import Qt, QPoint, QSettings, QTimer
 from PyQt5.QtGui import QKeySequence
@@ -44,15 +44,46 @@ class SettingsDialog(QDialog):
         
     def init_ui(self):
         self.setWindowTitle('设置')
-        self.setFixedSize(300, 150)
+        self.setFixedSize(420, 360)
         
         layout = QVBoxLayout()
         
-        # 开机自启复选框
+        # 1. 开机自启复选框
         self.autostart_checkbox = QCheckBox('开机自启')
         self.autostart_checkbox.setChecked(self.is_auto_start_enabled())
-        
         layout.addWidget(self.autostart_checkbox)
+        
+        # 2. 密钥配置表单
+        form_layout = QFormLayout()
+        
+        self.secret_id_input = QLineEdit()
+        self.secret_id_input.setPlaceholderText("请输入腾讯云 Secret ID")
+        if self.parent and hasattr(self.parent, 'SECRET_ID'):
+            self.secret_id_input.setText(self.parent.SECRET_ID)
+            
+        self.secret_key_input = QLineEdit()
+        self.secret_key_input.setPlaceholderText("请输入腾讯云 Secret Key")
+        if self.parent and hasattr(self.parent, 'SECRET_KEY'):
+            self.secret_key_input.setText(self.parent.SECRET_KEY)
+            
+        form_layout.addRow("Secret ID:", self.secret_id_input)
+        form_layout.addRow("Secret Key:", self.secret_key_input)
+        layout.addLayout(form_layout)
+        
+        # 3. 密钥获取提示信息
+        hint_label = QLabel()
+        hint_label.setWordWrap(True)
+        hint_label.setTextFormat(Qt.RichText)
+        hint_label.setOpenExternalLinks(True)
+        hint_label.setText(
+            "<div style='color: #555555; font-size: 12px; line-height: 1.5;'>"
+            "<b>如何获取密钥：</b><br>"
+            "1. 登录腾讯云控制台，前往 <a href='https://console.cloud.tencent.com/cam/capi'>API密钥管理</a> 页面申请并创建密钥。<br>"
+            "2. 如果您没有密钥，可以直接联系 "
+            "<b>田长金（<a href='mailto:473272738@qq.com'>473272738@qq.com</a>）</b> 索取测试密钥。"
+            "</div>"
+        )
+        layout.addWidget(hint_label)
         
         # 按钮
         buttons = QDialogButtonBox(
@@ -103,14 +134,36 @@ class SettingsDialog(QDialog):
             return False
         
     def accept(self):
-        # 应用设置
+        # 1. 尝试保存开机自启设置
         autostart_enabled = self.autostart_checkbox.isChecked()
-        success = self.set_auto_start(autostart_enabled)
+        autostart_success = self.set_auto_start(autostart_enabled)
         
-        if success:
-            super().accept()
-        else:
-            QMessageBox.warning(self, "错误", "设置开机自启失败，请以管理员权限运行程序")
+        # 2. 保存密钥到 QSettings
+        secret_id = self.secret_id_input.text().strip()
+        secret_key = self.secret_key_input.text().strip()
+        
+        if self.parent:
+            self.parent.settings.setValue("TENCENTCLOUD_SECRET_ID", secret_id)
+            self.parent.settings.setValue("TENCENTCLOUD_SECRET_KEY", secret_key)
+            
+            # 3. 尝试写入同目录的 config.json (作为备份)
+            try:
+                config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+                config_data = {}
+                if os.path.exists(config_path):
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                config_data["TENCENTCLOUD_SECRET_ID"] = secret_id
+                config_data["TENCENTCLOUD_SECRET_KEY"] = secret_key
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(config_data, f, ensure_ascii=False, indent=4)
+            except Exception:
+                pass
+                
+        if not autostart_success:
+            QMessageBox.warning(self, "警告", "设置已保存，但修改开机自启失败，请检查系统权限。")
+            
+        super().accept()
 import tencentcloud
 from tencentcloud.common import credential
 from tencentcloud.common.profile.client_profile import ClientProfile
@@ -219,13 +272,20 @@ class TranslatorApp(QMainWindow):
         
     def init_translator(self):
         """初始化翻译器"""
-        # 优先从环境变量获取，其次从同目录 config.json 读取
-        self.SECRET_ID = os.environ.get("TENCENTCLOUD_SECRET_ID", "")
-        self.SECRET_KEY = os.environ.get("TENCENTCLOUD_SECRET_KEY", "")
+        self.client = None
         
+        # 1. 优先从 QSettings 读取
+        self.SECRET_ID = self.settings.value("TENCENTCLOUD_SECRET_ID", "")
+        self.SECRET_KEY = self.settings.value("TENCENTCLOUD_SECRET_KEY", "")
+        
+        # 2. 其次从环境变量获取
+        if not self.SECRET_ID or not self.SECRET_KEY:
+            self.SECRET_ID = os.environ.get("TENCENTCLOUD_SECRET_ID", "")
+            self.SECRET_KEY = os.environ.get("TENCENTCLOUD_SECRET_KEY", "")
+        
+        # 3. 最后从同目录 config.json 读取
         if not self.SECRET_ID or not self.SECRET_KEY:
             try:
-                # 尝试读取本地配置文件
                 config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
                 if os.path.exists(config_path):
                     with open(config_path, 'r', encoding='utf-8') as f:
@@ -235,8 +295,22 @@ class TranslatorApp(QMainWindow):
             except Exception:
                 pass
                 
+        # 4. 如果仍未检测到密钥，引导用户去设置
         if not self.SECRET_ID or not self.SECRET_KEY:
-            QMessageBox.warning(self, "配置提示", "未检测到腾讯云 API 密钥，请在环境变量或 config.json 中配置。")
+            reply = QMessageBox.information(
+                self, 
+                "配置提示", 
+                "未检测到腾讯云 API 密钥。\n\n"
+                "本软件翻译功能依赖腾讯云服务。您可以：\n"
+                "1. 前往腾讯云控制台「API密钥管理」申请并创建密钥。\n"
+                "2. 直接联系田长金（473272738@qq.com）索取测试密钥。\n\n"
+                "是否现在打开「设置」配置密钥？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            if reply == QMessageBox.Yes:
+                QTimer.singleShot(100, self.open_settings)
+            return
             
         try:
             cred = credential.Credential(self.SECRET_ID, self.SECRET_KEY)
@@ -288,6 +362,10 @@ class TranslatorApp(QMainWindow):
         source_text = self.source_text.toPlainText().strip()
         if not source_text:
             QMessageBox.warning(self, "警告", "请输入要翻译的文本")
+            return
+            
+        if not hasattr(self, 'client') or self.client is None:
+            QMessageBox.warning(self, "配置提示", "请先在「设置」中配置腾讯云 API 密钥。")
             return
             
         try:
@@ -358,7 +436,11 @@ class TranslatorApp(QMainWindow):
         """打开设置对话框"""
         dialog = SettingsDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            QMessageBox.information(self, "提示", "设置已保存")
+            self.init_translator()
+            if self.client:
+                QMessageBox.information(self, "提示", "设置已保存，翻译服务初始化成功！")
+            else:
+                QMessageBox.warning(self, "提示", "设置已保存，但检测到密钥为空或初始化失败。")
         
     def on_tray_icon_activated(self, reason):
         """托盘图标激活事件"""
