@@ -1,0 +1,62 @@
+# -*- coding: utf-8 -*-
+
+import os
+import json
+import types
+from tencentcloud.common import credential
+from tencentcloud.common.profile.client_profile import ClientProfile
+from tencentcloud.common.profile.http_profile import HttpProfile
+from tencentcloud.common.exception.tencent_cloud_sdk_exception import TencentCloudSDKException
+from tencentcloud.tmt.v20180321 import tmt_client, models
+
+try:
+    # 优先从环境变量获取，其次从同目录 config.json 读取
+    SECRET_ID = os.environ.get("TENCENTCLOUD_SECRET_ID", "")
+    SECRET_KEY = os.environ.get("TENCENTCLOUD_SECRET_KEY", "")
+    
+    if not SECRET_ID or not SECRET_KEY:
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+                    SECRET_ID = config_data.get("TENCENTCLOUD_SECRET_ID", "")
+                    SECRET_KEY = config_data.get("TENCENTCLOUD_SECRET_KEY", "")
+        except Exception:
+            pass
+            
+    cred = credential.Credential(SECRET_ID, SECRET_KEY)
+    
+    # 实例化http选项
+    httpProfile = HttpProfile()
+    httpProfile.endpoint = "tmt.tencentcloudapi.com"
+
+    # 实例化client选项
+    clientProfile = ClientProfile()
+    clientProfile.httpProfile = httpProfile
+    # 关键修改：添加地域参数（这里用 ap-guangzhou，也可换成 ap-shanghai/ap-beijing 等）
+    client = tmt_client.TmtClient(cred, "ap-guangzhou", clientProfile)
+
+    # 实例化翻译请求对象（补充必填参数）
+    req = models.TextTranslateRequest()
+    # 翻译接口必填参数：SourceText(待翻译文本)、Source(源语言)、Target(目标语言)、ProjectId(默认0)
+    params = {
+        "SourceText": "你好，世界！",  # 待翻译的文本
+        "Source": "auto",               # 源语言：中文（支持自动识别填"auto"）
+        "Target": "en",               # 目标语言：英文（支持en/jp/kr等，详见官网文档https://cloud.tencent.com/document/api/551/15619）
+        "ProjectId": 0                # 项目ID，默认0即可
+    }
+    req.from_json_string(json.dumps(params))
+
+    # 调用翻译接口并输出结果
+    resp = client.TextTranslate(req)
+    print("翻译结果：", resp.to_json_string())
+
+except TencentCloudSDKException as err:
+    print("接口调用失败：", err)
+
+
+
+
+
+做一个gui翻译exe，支持窗口一直置顶图标，还有支持翻译为英日韩中语言，默认英语，窗口小点，叉掉后还可以在Windows的快捷启动菜单中，完全退出需要在快捷启动菜单点击右键退出。默认位置在右下角，支持移动和窗口变化。
