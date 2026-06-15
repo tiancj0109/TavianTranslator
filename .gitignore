@@ -1,0 +1,21 @@
+# 密钥配置文件
+config.json
+.env
+
+# Python 编译与缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# PyInstaller 打包产物与大文件
+build/
+dist/
+*.spec
+*.exe
+*.zip
+
+# 操作系统临时文件
+Thumbs.db
+ehthumbs.db
+Desktop.ini
